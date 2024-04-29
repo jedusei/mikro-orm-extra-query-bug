@@ -1,21 +1,38 @@
-import { Entity, MikroORM, PrimaryKey, Property } from '@mikro-orm/sqlite';
+import { Collection, Entity, ManyToOne, MikroORM, OneToMany, PrimaryKey, Property, Ref, UuidType, types } from '@mikro-orm/sqlite';
+
+abstract class BaseEntity {
+  @PrimaryKey({
+    type: types.uuid, // FAIL
+    // type: UuidType - FAIL
+    // type:'uuid' - PASS,
+    onCreate: () => crypto.randomUUID()
+  })
+  id!: string
+}
 
 @Entity()
-class User {
-
-  @PrimaryKey()
-  id!: number;
+class Product extends BaseEntity {
+  @Property()
+  name!: string
 
   @Property()
-  name: string;
+  price!: number
+}
 
-  @Property({ unique: true })
-  email: string;
+@Entity()
+class Order extends BaseEntity {
+  @OneToMany(() => OrderItem, e => e.order)
+  items!: Collection<OrderItem>
+}
 
-  constructor(name: string, email: string) {
-    this.name = name;
-    this.email = email;
-  }
+
+@Entity()
+class OrderItem {
+  @ManyToOne(() => Order, { primary: true, ref: true })
+  order!: Ref<Order>
+
+  @ManyToOne(() => Product, { primary: true, ref: true })
+  product!: Ref<Product>
 
 }
 
@@ -24,7 +41,7 @@ let orm: MikroORM;
 beforeAll(async () => {
   orm = await MikroORM.init({
     dbName: ':memory:',
-    entities: [User],
+    entities: [Product, Order, OrderItem],
     debug: ['query', 'query-params'],
     allowGlobalContext: true, // only for testing
   });
@@ -36,16 +53,22 @@ afterAll(async () => {
 });
 
 test('basic CRUD example', async () => {
-  orm.em.create(User, { name: 'Foo', email: 'foo' });
-  await orm.em.flush();
-  orm.em.clear();
+  const em = orm.em
 
-  const user = await orm.em.findOneOrFail(User, { email: 'foo' });
-  expect(user.name).toBe('Foo');
-  user.name = 'Bar';
-  orm.em.remove(user);
-  await orm.em.flush();
+  // Insert sample data
+  const product = em.create(Product, { name: "Product 1", price: 100 })
+  const order = em.create(Order, {});
+  order.items.add(em.create(OrderItem, { order, product }))
+  await em.flush();
 
-  const count = await orm.em.count(User, { email: 'foo' });
-  expect(count).toBe(0);
+  em.clear()
+
+  // This fires 2 queries instead of one
+  // First query fetches both OrderItem and Product via a join
+  // So there's no need for an additional query to fetch products
+  await em.find(OrderItem, {
+    order: order.id
+  }, {
+    populate: ['product'],
+  })
 });
