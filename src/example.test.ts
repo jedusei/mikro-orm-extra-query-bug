@@ -1,17 +1,10 @@
-import { Collection, Entity, ManyToOne, MikroORM, OneToMany, PrimaryKey, Property, Ref, UuidType, types } from '@mikro-orm/sqlite';
-
-abstract class BaseEntity {
-  @PrimaryKey({
-    type: types.uuid, // FAIL
-    // type: UuidType - FAIL
-    // type:'uuid' - PASS,
-    onCreate: () => crypto.randomUUID()
-  })
-  id!: string
-}
+import { Entity, MikroORM, PrimaryKey, Property, raw, sql } from '@mikro-orm/sqlite';
 
 @Entity()
-class Product extends BaseEntity {
+class Product {
+  @PrimaryKey()
+  id!: number
+
   @Property()
   name!: string
 
@@ -19,29 +12,13 @@ class Product extends BaseEntity {
   price!: number
 }
 
-@Entity()
-class Order extends BaseEntity {
-  @OneToMany(() => OrderItem, e => e.order)
-  items!: Collection<OrderItem>
-}
-
-
-@Entity()
-class OrderItem {
-  @ManyToOne(() => Order, { primary: true, ref: true })
-  order!: Ref<Order>
-
-  @ManyToOne(() => Product, { primary: true, ref: true })
-  product!: Ref<Product>
-
-}
 
 let orm: MikroORM;
 
 beforeAll(async () => {
   orm = await MikroORM.init({
     dbName: ':memory:',
-    entities: [Product, Order, OrderItem],
+    entities: [Product],
     debug: ['query', 'query-params'],
     allowGlobalContext: true, // only for testing
   });
@@ -56,19 +33,17 @@ test('basic CRUD example', async () => {
   const em = orm.em
 
   // Insert sample data
-  const product = em.create(Product, { name: "Product 1", price: 100 })
-  const order = em.create(Order, {});
-  order.items.add(em.create(OrderItem, { order, product }))
+  let product = em.create(Product, { name: "Product 1", price: 100 })
+
   await em.flush();
 
   em.clear()
 
-  // This fires 2 queries instead of one
-  // First query fetches both OrderItem and Product via a join
-  // So there's no need for an additional query to fetch products
-  await em.find(OrderItem, {
-    order: order.id
-  }, {
-    populate: ['product'],
-  })
+  product = await em.findOne(Product, product.id);
+  product.price = raw(`price + 1`);
+  await em.flush();
+
+  product = await em.fork().findOne(Product, product.id)
+
+  expect(product.price).toBe(101);
 });
